@@ -1,0 +1,48 @@
+name: LunaMC Media Bot
+
+# The bot runs for about 5h 40m per run (GitHub stops jobs at 6 hours),
+# saves its database to the `bot-data` branch, and the next run takes over.
+on:
+  workflow_dispatch:          # "Run workflow" button + used by the bot to start the next run
+  schedule:
+    - cron: "23 */4 * * *"    # safety net: restarts the chain if it ever breaks
+
+# Only ONE copy of the bot may run at a time. A new run waits until the current one finishes.
+concurrency:
+  group: lunamc-media-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # save the database to the bot-data branch
+  actions: write    # start the next run
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      - name: Queue the next run (it starts as soon as this one finishes)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run "${{ github.workflow }}" --ref "${{ github.ref_name }}" || true
+
+      - name: Run the bot
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          DB_KEY: ${{ secrets.DB_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          APARAT_PROXY: ${{ secrets.APARAT_PROXY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_SECONDS: "20400"   # 5h 40m
+        # If the bot crashes right away (e.g. wrong token), wait 5 minutes so it doesn't restart in a tight loop.
+        run: python bot.py || (echo "Bot stopped with an error - waiting 5 minutes"; sleep 300; exit 1)
